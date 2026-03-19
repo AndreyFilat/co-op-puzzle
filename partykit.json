@@ -1,0 +1,10 @@
+{
+  "name": "coop-puzzle",
+  "main": "partykit/roomServer.ts",
+  "port": 1999,
+  "parties": {
+    "coop_puzzle": "partykit/roomServer.ts"
+  },
+  "persist": true
+}
+
