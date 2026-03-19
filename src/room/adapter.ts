@@ -399,10 +399,21 @@ class FallbackRoomAdapter implements RoomAdapter {
     return this.active === 'partykit' && this.party ? this.party.getDebug() : this.local.getDebug()
   }
 
+  private getPartyKitBaseWsUrl(): string {
+    const envHostRaw = (import.meta as ImportMeta & { env: Record<string, string | undefined> }).env.VITE_PARTYKIT_HOST
+    const trimmed = envHostRaw?.trim()
+    if (!trimmed) return 'ws://localhost:1999'
+
+    if (trimmed.startsWith('ws://') || trimmed.startsWith('wss://')) return trimmed.replace(/\/+$/, '')
+    if (trimmed.startsWith('http://')) return `ws://${trimmed.slice('http://'.length).replace(/\/+$/, '')}`
+    if (trimmed.startsWith('https://')) return `wss://${trimmed.slice('https://'.length).replace(/\/+$/, '')}`
+    return `wss://${trimmed.replace(/\/+$/, '')}`
+  }
+
   tryConnectPartyKit(args: { roomId: string; self: RoomPlayer }) {
     const partyKitName = 'coop_puzzle'
-    const partyKitPort = 1999
-    const wsUrl = `ws://localhost:${partyKitPort}/parties/${partyKitName}/${args.roomId}`
+    const baseWsUrl = this.getPartyKitBaseWsUrl()
+    const wsUrl = `${baseWsUrl}/parties/${partyKitName}/${args.roomId}`
 
     const onConnected = () => {
       this.active = 'partykit'
