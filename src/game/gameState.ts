@@ -2,201 +2,120 @@ import type { Board, GameState, Level, Pos } from './types'
 import { createTile, rotateTileCW, setTile } from './tileUtils'
 import { solveBoard } from './solver'
 
-const empty = (): Board[number][number] => createTile('empty')
-
 const GENERATOR = createTile('generator', 0, { rotatable: false })
 const REACTOR = createTile('reactor', 0, { rotatable: false })
 
+const EMPTY = createTile('empty')
+
+// Level 1 (8x8): overload avoidance via loop, with a coop-locked gate.
 const LEVEL_1: Level = {
-  id: 'l1',
-  name: 'SYNC Tile Test',
-  size: 6,
+  id: 'hand1',
+  name: 'Overload Avoidance (Loop + Locked SYNC Gate)',
+  size: 10,
   board: [
-    // Generator -> SYNC_TILE (row0) -> corner -> vertical corridor -> reactor.
-    // Without cooperation, SYNC_TILE can be held but cannot be rotated, so the corridor stays disconnected.
-    [GENERATOR, createTile('straight', 1), createTile('straight', 1), createTile('sync_tile', 0), createTile('straight', 1), createTile('corner', 2)],
-    [empty(), empty(), empty(), empty(), empty(), createTile('straight', 1)],
-    [empty(), empty(), empty(), empty(), empty(), createTile('straight', 1)],
-    [empty(), empty(), empty(), empty(), empty(), createTile('straight', 1)],
-    [empty(), empty(), empty(), empty(), empty(), createTile('straight', 1)],
-    [empty(), empty(), empty(), empty(), empty(), REACTOR],
-  ],
+    // r0
+    [EMPTY, EMPTY, EMPTY, EMPTY, GENERATOR, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
+
+    // r1
+    [EMPTY, EMPTY, EMPTY, createTile('corner', 1), createTile('tee', 0), createTile('corner', 2), EMPTY, EMPTY, EMPTY, EMPTY],
+
+    // r2
+    [EMPTY, EMPTY, EMPTY, createTile('straight', 0), EMPTY, createTile('sync_tile', 1), EMPTY, EMPTY, EMPTY, EMPTY],
+
+    // r3
+    [EMPTY, EMPTY, createTile('corner', 1), createTile('corner', 3), EMPTY, createTile('corner', 0), createTile('corner', 2), EMPTY, EMPTY, EMPTY],
+
+    // r4
+    [EMPTY, EMPTY, createTile('straight', 0), EMPTY, EMPTY, EMPTY, createTile('straight', 0), EMPTY, EMPTY, EMPTY],
+
+    // r5
+    [EMPTY, EMPTY, createTile('corner', 0), createTile('straight', 1), createTile('corner', 2), EMPTY, createTile('straight', 0), EMPTY, EMPTY, EMPTY],
+
+    // r6 (merge zone)
+    [EMPTY, EMPTY, EMPTY, EMPTY, createTile('corner', 0), createTile('cross', 0), createTile('corner', 3), EMPTY, EMPTY, EMPTY],
+
+    // r7 (locked on path)
+    [EMPTY, EMPTY, EMPTY, EMPTY, createTile('cross', 0), createTile('straight', 0, { locked: false }), EMPTY, EMPTY, EMPTY, EMPTY],
+
+    // r8 (специально сломан поворот — не solved)
+    [EMPTY, EMPTY, EMPTY, EMPTY, createTile('corner', 2), createTile('corner', 1), EMPTY, EMPTY, EMPTY, EMPTY],
+
+    // r9
+    [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, REACTOR, EMPTY, EMPTY, EMPTY, EMPTY],
+  ] as unknown as Board,
 }
 
+// Level 2 (8x8): locked path + overload interaction at the central merge cross.
 const LEVEL_2: Level = {
-  id: 'l2',
-  name: 'Sideways Switchback',
-  size: 6,
+  id: 'hand2',
+  name: 'Locked Path + Overload Interaction',
+  size: 8,
   board: [
-    [GENERATOR, createTile('straight', 0), createTile('corner', 1), empty(), empty(), empty()],
-    [empty(), createTile('corner', 1), createTile('straight', 1), empty(), empty(), empty()],
-    [empty(), createTile('cross', 0), createTile('tee', 3), createTile('corner', 1), empty(), empty()],
-    [empty(), empty(), empty(), createTile('straight', 1), empty(), empty()],
-    [empty(), empty(), empty(), createTile('corner', 3), createTile('straight', 0), createTile('corner', 1)],
-    [empty(), empty(), empty(), empty(), empty(), REACTOR],
-  ],
+    // r0
+    [EMPTY, EMPTY, GENERATOR, EMPTY, EMPTY, EMPTY, createTile('corner', 0), createTile('corner', 3)],
+    // r1
+    [EMPTY, createTile('corner', 3), createTile('tee', 0), createTile('corner', 2), EMPTY, EMPTY, createTile('corner', 2), createTile('corner', 1)],
+    // r2
+    [EMPTY, createTile('corner', 0), createTile('cross', 0), createTile('corner', 0), EMPTY, EMPTY, EMPTY, EMPTY],
+    // r3
+    [EMPTY, EMPTY, createTile('straight', 1), EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
+    // r4  <- LOCKED gate blocks main corridor until coop unlock/rotation
+    [EMPTY, EMPTY, createTile('corner', 0), createTile('straight', 0, { locked: false }), createTile('corner', 2), EMPTY, EMPTY, EMPTY],
+    // r5  <- extra decision element (competing route)
+    [createTile('corner', 0), createTile('corner', 3), EMPTY, createTile('corner', 1), createTile('tee', 0), createTile('corner', 0), EMPTY, EMPTY],
+    // r6
+    [createTile('corner', 2), createTile('corner', 1), EMPTY, createTile('straight', 1), EMPTY, EMPTY, EMPTY, EMPTY],
+    // r7  <- coop SYNC_TILE gate to unlock the LOCKED tile
+    [createTile('corner', 1), createTile('corner', 2), EMPTY, createTile('corner', 0), createTile('sync_tile', 1), REACTOR, EMPTY, EMPTY],
+  ] as unknown as Board,
 }
 
+// Level 3 (10x10): split-merge with overload at merge and dual locked branch gates.
+//
+// Layout sketch:
+// - Generator (0,4) -> fixed split tee (1,4)
+// - Left branch (starts at 1,3) -> locked corner (3,2) -> winding chain -> merge entrance (5,3)
+// - Right branch (starts at 1,5) -> locked corner (3,6) -> winding chain -> merge entrance (5,5)
+// - Merge: overloaded-sensitive cross (5,4) receives from both sides
+// - Downstream: (6,4) straight -> (7,4) straight -> (8,4) corner -> (8,5) corner -> Reactor (9,5)
+// - Coop: an isolated sync_tile (8,0) unlocks locked tiles.
 const LEVEL_3: Level = {
-  id: 'l3',
-  name: 'Junction Nebula',
-  size: 7,
+  id: 'splitmerge1',
+  name: 'Split/Merge Overload (Critical Locked Gate)',
+  size: 10,
   board: [
-    [GENERATOR, createTile('straight', 0), createTile('straight', 0), createTile('corner', 1), empty(), empty(), empty()],
-    [empty(), empty(), createTile('tee', 1), createTile('straight', 1), empty(), empty(), empty()],
-    [empty(), createTile('corner', 0), createTile('cross', 0), createTile('tee', 3), createTile('corner', 1), empty(), empty()],
-    [empty(), empty(), createTile('corner', 1), empty(), createTile('straight', 1), empty(), empty()],
-    [empty(), empty(), empty(), empty(), createTile('corner', 3), createTile('straight', 0), createTile('corner', 1)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), REACTOR],
-  ],
+    // r0
+    [EMPTY, EMPTY, EMPTY, EMPTY, GENERATOR, EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
+    // r1: split tee (generator -> 2 branches)
+    // (1,4) must accept from North, and can emit to West/East.
+    [EMPTY, EMPTY, EMPTY, createTile('corner', 1), createTile('tee', 0), createTile('corner', 2), EMPTY, EMPTY, EMPTY, EMPTY],
+    // r2
+    [EMPTY, EMPTY, EMPTY, createTile('straight', 0), EMPTY, createTile('straight', 0), EMPTY, EMPTY, EMPTY, EMPTY],
+    // r3
+    [EMPTY, EMPTY, EMPTY, createTile('straight', 0), EMPTY, createTile('straight', 0), EMPTY, EMPTY, EMPTY, EMPTY],
+    // r4
+    [EMPTY, EMPTY, EMPTY, createTile('straight', 0), EMPTY, createTile('straight', 0), EMPTY, EMPTY, EMPTY, EMPTY],
+    // r5: merge cross
+    // Left branch entrance at (5,3) -> cross at (5,4) from West.
+    // Right branch entrance at (5,5) -> cross at (5,4) from East.
+    [EMPTY, EMPTY, EMPTY, createTile('corner', 0), createTile('cross', 0), createTile('corner', 3), EMPTY, EMPTY, EMPTY, EMPTY],
+    // r6: sync_tile is downstream of the overload-sensitive merge.
+    [EMPTY, EMPTY, EMPTY, EMPTY, createTile('sync_tile', 1), EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
+    // r7: Gate tile on the only sync->reactor corridor.
+    // Keep it unlocked so E8 (row 8, col E) is always rotatable.
+    [EMPTY, EMPTY, EMPTY, EMPTY, createTile('straight', 1, { locked: false }), EMPTY, EMPTY, EMPTY, EMPTY, EMPTY],
+    // r8: after the locked straight, we must turn into the reactor corridor.
+    [EMPTY, EMPTY, EMPTY, EMPTY, createTile('corner', 1), createTile('corner', 0), EMPTY, EMPTY, EMPTY, EMPTY],
+    // r9
+    [EMPTY, EMPTY, EMPTY, EMPTY, EMPTY, REACTOR, EMPTY, EMPTY, EMPTY, EMPTY],
+  ] as unknown as Board,
 }
 
-const LEVEL_4: Level = {
-  id: 'l4',
-  name: 'Loop Labyrinth',
-  size: 7,
-  board: [
-    [GENERATOR, createTile('straight', 0), createTile('straight', 0), createTile('corner', 1), empty(), empty(), empty()],
-    [empty(), empty(), empty(), createTile('straight', 1), empty(), empty(), empty()],
-    [empty(), empty(), empty(), createTile('tee', 3), createTile('corner', 1), empty(), empty()],
-    [empty(), empty(), createTile('corner', 0), createTile('tee', 0), createTile('straight', 1), empty(), empty()],
-    [empty(), empty(), createTile('corner', 2), createTile('cross', 0), createTile('straight', 1), empty(), empty()],
-    [empty(), empty(), empty(), empty(), createTile('straight', 1), empty(), empty()],
-    [empty(), empty(), empty(), empty(), createTile('corner', 3), createTile('straight', 0), REACTOR],
-  ],
-}
-
-// Existing 8x8 layouts become deeper Levels 5 and 6
-const LEVEL_5: Level = {
-  id: 'l5',
-  name: 'Branch & Loop (Deep)',
-  size: 8,
-  board: [
-    [GENERATOR, createTile('straight', 1), createTile('straight', 1), createTile('corner', 2), empty(), empty(), empty(), empty()],
-    [empty(), empty(), empty(), createTile('straight', 0), empty(), empty(), empty(), empty()],
-    [empty(), empty(), empty(), createTile('straight', 0), empty(), empty(), empty(), empty()],
-    [
-      empty(),
-      empty(),
-      empty(),
-      createTile('tee', 1),
-      createTile('straight', 1),
-      createTile('straight', 1),
-      // Break east branch here in the initial layout.
-      createTile('corner', 1),
-      empty(),
-    ],
-    [empty(), empty(), empty(), createTile('straight', 0), empty(), empty(), createTile('straight', 0), empty()],
-    [empty(), createTile('corner', 1), createTile('cross', 0), createTile('corner', 3), empty(), empty(), createTile('straight', 0), empty()],
-    [empty(), createTile('corner', 0), createTile('corner', 3), empty(), empty(), empty(), createTile('straight', 3), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('corner', 3), REACTOR],
-  ],
-}
-
-const LEVEL_6: Level = {
-  id: 'l6',
-  name: 'Multiple Routes (Final)',
-  size: 8,
-  board: [
-    [GENERATOR, createTile('straight', 1), createTile('straight', 1), createTile('corner', 2), empty(), empty(), empty(), empty()],
-    [empty(), empty(), empty(), createTile('straight', 0), empty(), empty(), empty(), empty()],
-    [empty(), empty(), empty(), createTile('straight', 0), empty(), empty(), empty(), empty()],
-    [empty(), empty(), empty(), createTile('corner', 0), createTile('straight', 1), createTile('straight', 1), createTile('corner', 1), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 0), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 0), empty()],
-    [empty(), empty(), empty(), empty(), empty(), createTile('corner', 1), createTile('tee', 3), empty()],
-    [empty(), empty(), empty(), empty(), empty(), createTile('corner', 0), createTile('tee', 3), REACTOR],
-  ],
-}
-
-const LEVEL_A: Level = {
-  id: 'a7',
-  name: 'Co-op Gate A',
-  size: 7,
-  board: [
-    [GENERATOR, createTile('straight', 0), createTile('straight', 0), createTile('sync_tile', 0), createTile('straight', 0), createTile('corner', 0), empty()],
-    [empty(), empty(), createTile('corner', 0), createTile('corner', 2), empty(), createTile('straight', 1), empty()],
-    [empty(), empty(), createTile('corner', 1), createTile('cross', 0), empty(), createTile('tee', 3), createTile('corner', 0)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('sync_tile', 1)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), REACTOR],
-  ],
-}
-
-const LEVEL_B: Level = {
-  id: 'b8',
-  name: 'Co-op Gate B',
-  size: 8,
-  board: [
-    [
-      GENERATOR,
-      createTile('straight', 0),
-      createTile('straight', 0),
-      createTile('straight', 0),
-      createTile('sync_tile', 0),
-      createTile('straight', 0),
-      createTile('corner', 0),
-      empty(),
-    ],
-    [empty(), empty(), empty(), createTile('corner', 0), empty(), empty(), createTile('straight', 1), empty()],
-    [empty(), empty(), empty(), createTile('cross', 0), empty(), empty(), createTile('straight', 1), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('tee', 3), createTile('corner', 0)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), empty(), createTile('sync_tile', 1)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), empty(), REACTOR],
-  ],
-}
-
-const LEVEL_C: Level = {
-  id: 'c8',
-  name: 'Co-op Gate C',
-  size: 8,
-  board: [
-    [GENERATOR, createTile('straight', 0), createTile('straight', 0), createTile('straight', 0), createTile('sync_tile', 0), createTile('straight', 0), createTile('corner', 0), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1), empty()],
-    [empty(), empty(), empty(), empty(), empty(), createTile('corner', 0), createTile('corner', 0), empty()],
-    [empty(), empty(), empty(), empty(), empty(), createTile('tee', 0), createTile('cross', 0), empty()],
-    [empty(), empty(), empty(), empty(), empty(), createTile('sync_tile', 1), empty(), empty()],
-    [empty(), empty(), empty(), empty(), empty(), createTile('straight', 1), empty(), empty()],
-    [empty(), empty(), empty(), empty(), empty(), createTile('corner', 2), createTile('corner', 0), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), REACTOR, empty()],
-  ],
-}
-
-const LEVEL_D: Level = {
-  id: 'd9',
-  name: 'Co-op Gate D',
-  size: 9,
-  board: [
-    [GENERATOR, createTile('straight', 0), createTile('straight', 0), createTile('straight', 0), createTile('sync_tile', 0), createTile('straight', 0), createTile('corner', 0), empty(), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1), empty(), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1), empty(), empty()],
-    [empty(), empty(), empty(), empty(), empty(), createTile('cross', 0), createTile('tee', 3), createTile('corner', 0), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), empty(), createTile('sync_tile', 1), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), empty(), createTile('straight', 1), empty()],
-    [empty(), empty(), empty(), empty(), empty(), empty(), empty(), createTile('corner', 2), createTile('corner', 0)],
-    [empty(), empty(), empty(), empty(), empty(), empty(), empty(), empty(), REACTOR],
-  ],
-}
-
-export const LEVELS: ReadonlyArray<Level> = [LEVEL_1, LEVEL_2, LEVEL_3, LEVEL_4, LEVEL_5, LEVEL_6, LEVEL_A, LEVEL_B, LEVEL_C, LEVEL_D]
+export const LEVELS: ReadonlyArray<Level> = [LEVEL_1, LEVEL_2, LEVEL_3]
 
 export function createGameState(levelIndex: number, nowMs: number): GameState {
   const idx = Math.max(0, Math.min(levelIndex, LEVELS.length - 1))
   const level = LEVELS[idx]!
-
-  // Temporary debug: verify level progression + SYNC_TILE density.
-  let syncTileCount = 0
-  for (let r = 0; r < level.board.length; r++) {
-    for (let c = 0; c < level.board[r]!.length; c++) {
-      if (level.board[r]![c]!.type === 'sync_tile') syncTileCount++
-    }
-  }
-  console.log('[level-load]', { levelIndex: idx, boardSize: level.size, syncTileCount, levelId: level.id })
 
   const solvedInitial = solveBoard(level.board)
 

@@ -55,6 +55,27 @@ function withGame(state: RoomState, game: GameState): RoomState {
   return { ...state, game }
 }
 
+function applyLockedExpiry(board: GameState['board'], nowMs: number): GameState['board'] {
+  // Only affects tiles that were temporarily unlocked.
+  // Locked tiles (locked=true) are left as-is.
+  return board.map((row) =>
+    row.map((t) => {
+      if (t.unlockedUntilMs == null) return t
+      if (nowMs <= t.unlockedUntilMs) return { ...t, locked: false }
+      return { ...t, locked: true, unlockedUntilMs: undefined }
+    }),
+  )
+}
+
+function unlockAllLocked(board: GameState['board'], nowMs: number): GameState['board'] {
+  return board.map((row) =>
+    row.map((t) => {
+      if (!t.locked) return t
+      return { ...t, locked: false, unlockedUntilMs: nowMs + 2000 }
+    }),
+  )
+}
+
 export function createInitialRoom(roomId: string, nowMs: number, firstPlayer: RoomPlayer): RoomState {
   const game = createGameState(0, nowMs)
   return {
@@ -106,13 +127,16 @@ export function applyRoomAction(state: RoomState, action: RoomAction): RoomState
 
       const player = findPlayer(state.players, action.playerId)
 
-      const tile = state.game.board[action.pos.r]?.[action.pos.c]
+      const boardAfterExpiry = applyLockedExpiry(state.game.board, action.atMs)
+      const gameAfterExpiry = boardAfterExpiry === state.game.board ? state.game : { ...state.game, board: boardAfterExpiry }
+
+      const tile = gameAfterExpiry.board[action.pos.r]?.[action.pos.c]
       if (tile && tile.type === 'sync_tile') {
         const now = action.atMs
 
         // Expiration: if the window elapsed, reset to idle before processing.
         let currentTile = tile
-        let board = state.game.board
+        let board = gameAfterExpiry.board
         if (currentTile.heldUntilMs != null && now > currentTile.heldUntilMs) {
           currentTile = { ...currentTile, heldByPlayerId: undefined, heldUntilMs: undefined }
           board = setTile(board, action.pos, currentTile)
@@ -130,7 +154,7 @@ export function applyRoomAction(state: RoomState, action: RoomAction): RoomState
           const won = solved.reactorPowered
 
           const game: GameState = {
-            ...state.game,
+            ...gameAfterExpiry,
             board: solved.board,
             // Holding doesn't rotate.
             status: won ? 'won' : 'playing',
@@ -165,7 +189,7 @@ export function applyRoomAction(state: RoomState, action: RoomAction): RoomState
           const won = solved.reactorPowered
 
           const game: GameState = {
-            ...state.game,
+            ...gameAfterExpiry,
             board: solved.board,
             status: won ? 'won' : 'playing',
             wonAtMs: won ? state.game.wonAtMs ?? now : null,
@@ -188,11 +212,19 @@ export function applyRoomAction(state: RoomState, action: RoomAction): RoomState
         }
         const rotatedTile = rotateTileCW(clearedTile)
         const nextBoard = setTile(board, action.pos, rotatedTile)
-        const solved = solveBoard(nextBoard)
+        // Unlock decision is based on whether the sync_tile is powered *before* this second click
+        // rotates it away (since rotation can make the sync_tile unpowered immediately).
+        // If the merge cross is overloaded, energy never reaches the sync_tile in the held state,
+        // so unlocking won't trigger.
+        const solvedIfUnlocked = solveBoard(board)
+        const syncKey = `${action.pos.r},${action.pos.c}`
+        const shouldUnlock = solvedIfUnlocked.poweredKeys.has(syncKey)
+        const unlockedBoard = shouldUnlock ? unlockAllLocked(nextBoard, now) : nextBoard
+        const solved = solveBoard(unlockedBoard)
         const won = solved.reactorPowered
 
         const game: GameState = {
-          ...state.game,
+          ...gameAfterExpiry,
           board: solved.board,
           moves: state.game.moves + 1,
           status: won ? 'won' : 'playing',
@@ -213,7 +245,7 @@ export function applyRoomAction(state: RoomState, action: RoomAction): RoomState
         return { ...state, game, players, recentActions: recent }
       }
 
-      const rotated = rotateAt(state.game, action.pos, action.atMs)
+      const rotated = rotateAt(gameAfterExpiry, action.pos, action.atMs)
       const game =
         rotated.status === 'won' && state.game.status !== 'won'
           ? { ...rotated, winAnimationStartedAtMs: action.atMs }

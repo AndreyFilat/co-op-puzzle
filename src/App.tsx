@@ -1,6 +1,5 @@
 import './App.css'
 import { useEffect, useMemo, useState } from 'react'
-import { LEVELS } from './game/gameState'
 import { elapsedMs, formatTime } from './game/gameState'
 import { GameBoard } from './components/GameBoard'
 import { Hud } from './components/Hud'
@@ -176,19 +175,6 @@ function App() {
               onNext={handleNext}
               hideControls={room.game.status === 'won'}
             />
-            {/* Temporary debug: level progression */}
-            <div
-              style={{
-                marginTop: 6,
-                fontSize: 12,
-                opacity: 0.8,
-                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                color: 'var(--text-h)',
-              }}
-            >
-              levelIndex={room.game.levelIndex} id={room.game.level.id} total={LEVELS.length} levelSize={room.game.level.size} boardSize=
-              {room.game.board.length}x{room.game.board[0]?.length ?? 0}
-            </div>
 
             <div className="boardArea">
               <GameBoard

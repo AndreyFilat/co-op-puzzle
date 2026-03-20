@@ -20,6 +20,8 @@ export type Tile = Readonly<{
   rotatable: boolean
   locked: boolean
   powered: boolean
+  overloaded?: boolean // Overload: multiple energy flows collided; blocks conduction + shows overheated visuals.
+  unlockedUntilMs?: number // When set, locked tiles temporarily become rotatable for cooperative unlocks.
   heldByPlayerId?: string // SYNC_TILE: holder id
   heldUntilMs?: number // SYNC_TILE: window end
 }>

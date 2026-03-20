@@ -64,6 +64,7 @@ export function createTile(
     powered: opts?.powered ?? false,
     heldByPlayerId: undefined,
     heldUntilMs: undefined,
+    unlockedUntilMs: undefined,
   }
 }
 
